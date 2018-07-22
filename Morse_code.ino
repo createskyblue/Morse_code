@@ -1,9 +1,9 @@
 /*=========================================================
-LHW开发
-邮箱:1281702594@qq.com
-采用CC协议 https://creativecommons.org/licenses/by-nc-nd/2.5/cn/
-提示：有个小彩蛋
-=========================================================*/
+  LHW开发
+  邮箱:1281702594@qq.com
+  采用CC协议 https://creativecommons.org/licenses/by-nc-nd/2.5/cn/
+  提示：有个小彩蛋
+  =========================================================*/
 #include <Arduboy2.h>
 Arduboy2 arduboy;
 /*=========================================================
@@ -16,49 +16,49 @@ int ML, MS; //最长最短间隔
 byte DT;//刷新画面间隔 单位 程序周期
 bool EL = false; //电平情况
 bool NEL; //现在电平情况
-int CIT1, CIT2; //开始和上一次时间
-int CILTF = 6; //电码 间隔 电平 时间 容错   不能太高或太低 太高会导致精准度下降 如果信号源质量不行 太低也会无法识别
+long CIT1, CIT2; //开始和上一次时间
+int CILTF = 10; //这个值由ML与LS决定
 int DTO = 3000; //接收超时 单位：ms
-byte DTT[10]; //缓存的数据表 0代表在点的间隔低电平 1代表点 2代表划
+byte DTT[5]; //缓存的数据表 0代表在点的间隔低电平 1代表点 2代表划
 byte DTL = 255; //缓存写入的位置 255代为禁用 也就是说没信号
 //码库
 long MH[36] = {
-  1020202020,
-  1010202020,
-  1010102020,
-  1010101020,
-  1010101010,
-  2010101010,
-  2020101010,
-  2020201010,
-  2020202010,
-  2020202020,
-  1020000000,
-  2010101000,
-  2010201000,
-  2010100000,
-  1000000000,
-  1010201000,
-  2020100000,
-  1010101000,
-  1010000000,
-  1020202000,
-  2010200000,
-  1020101000,
-  2020000000,
-  2010000000,
-  2020200000,
-  1020201000,
-  2020102000,
-  1020100000,
-  1010100000,
-  2000000000,
-  1010200000,
-  1010102000,
-  1020200000,
-  2010102000,
-  2010202000,
-  2020101000
+  12222,
+  11222,
+  11122,
+  11112,
+  11111,
+  21111,
+  22111,
+  22211,
+  22221,
+  22222,
+  12000,
+  21110,
+  21210,
+  21100,
+  10000,
+  11210,
+  22100,
+  11110,
+  11000,
+  12220,
+  21200,
+  12110,
+  22000,
+  21000,
+  22200,
+  12210,
+  22120,
+  12100,
+  11100,
+  20000,
+  11200,
+  11120,
+  12200,
+  21120,
+  21220,
+  22110
 };
 byte ME[36] = {
   49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
@@ -90,7 +90,7 @@ void loop()
   key(); //按键检测
   sampling(); //采样
 
-  if (DT == 64) {  //跳帧节约系统资源
+  if (DT == 2) {  //跳帧节约系统资源
     Draw();
     DT = 0;
   } else {
@@ -112,7 +112,7 @@ void Draw() {
   arduboy.clear();
   DrawWav();  //显示波形
   arduboy.setCursor(0, 0);
-
+  
   for (int i = 0; i < 21; i++) {
     arduboy.print(char(TmpString[i]));
   }
@@ -123,12 +123,12 @@ void Draw() {
   arduboy.setCursor(64, 8);
   arduboy.print("MS:");
   arduboy.print(MS);
-  arduboy.setCursor(0, 16);
-  arduboy.print("DTL:");
-  arduboy.print(DTL);
-  arduboy.setCursor(45, 16);
+  arduboy.setCursor(0, 20);
+  arduboy.print("RX:");
+  if (DTL != 255) arduboy.print(DTL); else arduboy.print(F("N/A"));
+  arduboy.setCursor(45, 20);
   arduboy.print("DTT:");
-  for (int i = 0; i < 10; i++) {
+  for (int i = 0; i < 5; i++) {
     arduboy.print(DTT[i]);
   }
   for (int i = 0; i < 10; i++) {    //增加气氛...我知道这注释很扯...管他的
@@ -152,7 +152,7 @@ void VEGG() {
                      清除数据缓冲
   =========================================================*/
 void CM() {
-  for (int i = 0; i < 10; i++) DTT[i] = 0;
+  for (int i = 0; i < 5; i++) DTT[i] = 0;
 }
 /*=========================================================
                      译码
@@ -166,16 +166,15 @@ void translation()
   } else {
     if (CIT2 >= MS - CILTF && CIT2 <= MS + CILTF && MS != 0 && EL == true) {
       //合法数据 写入缓存
-
       DTT[DTL] = 1;
       DTL++;
-    } else {
+    } /*else {
       if (CIT2 >= MS - CILTF && CIT2 <= MS + CILTF && MS != 0 && EL == false) {
         //合法数据 写入缓存
         DTT[DTL] = 0;
         DTL++;
       }
-    }
+    }*/
   }
   TOStr(); //超时合并字符串
 }
@@ -186,7 +185,7 @@ void TOStr() {
   if (( millis() / 10.0) >= CIT1 + DTO) { //译码时间超时 确认不在有数据 数据合并
     //数据接收完成 查询数据库
     String TXT;
-    for (int i = 0; i < 10; i++) {   //把接收区缓存合成字符串
+    for (int i = 0; i < 5; i++) {   //把接收区缓存合成字符串
       TXT = TXT + DTT[i];
     }
     for (int i = 0; i < 36; i++) {    //匹配数据库信号
@@ -196,7 +195,9 @@ void TOStr() {
         for (byte i = 0; i < 20; i++) {
           TmpString[i] = TmpString[i + 1];
         }
+        Serial.println(char(TmpString[0]));
         TmpString[20] = ME[i]; //写到显示区最后的位置
+        
         CM();
       }
     }
@@ -213,6 +214,7 @@ void Minterval() {
     CIT2 = ( millis() / 10.0) - CIT1;
     CIT1 = millis() / 10.0; //获取开始计算时的时间
     if (DTL != 255) translation(); //译码
+    
     //计算最长和最短电平
     if (EL == true) {
       if (CIT2 > MS ) {
@@ -233,13 +235,16 @@ void Minterval() {
         DTL = 0; //写入位置为0
         CM();
       }
-
     }
     if (CIT2 <= ML - CILTF && CIT2 > 5) {
       MS = CIT2;
     }
+    if (ML != 0 && MS != 0) {
+      CILTF = ((ML + MS) / 2.0) * 0.6;
+    }
     EL = !EL; //反转电平状态
   }
+  
   if (( millis() / 10.0) >= CIT1 + DTO && DTL != 255) {
     TOStr(); //超时
   }
@@ -271,31 +276,26 @@ void DrawWav() {
                      ADC深度设置
   =========================================================*/
 void setP32( ) {
-  Serial.println("ADC Prescaler = 32");  // 101
   ADCSRA |=  (1 << ADPS2);  // 1
   ADCSRA &=  ~(1 << ADPS1);  // 0
   ADCSRA |=  (1 << ADPS0);  // 1
 }
 void setP16( ) {
-  Serial.println("ADC Prescaler = 16");  // 100
   ADCSRA |=  (1 << ADPS2);  // 1
   ADCSRA &=  ~(1 << ADPS1);  // 0
   ADCSRA &=  ~(1 << ADPS0);  // 0
 }
 void setP8( ) {  // prescaler = 8
-  Serial.println("ADC Prescaler = 8");  // 011
   ADCSRA &=  ~(1 << ADPS2);  // 0
   ADCSRA |=  (1 << ADPS1);  // 1
   ADCSRA |=  (1 << ADPS0);  // 1
 }
 void setP4( ) {  // prescaler = 4
-  Serial.println("ADC Prescaler = 4");  // 010
   ADCSRA &=  ~(1 << ADPS2);  // 0
   ADCSRA |=  (1 << ADPS1);  // 1
   ADCSRA &=  ~(1 << ADPS0);  // 0
 }
 void setP128( ) { // 默認就是這樣
-  Serial.println("ADC Prescaler = 128");  // 111
   ADCSRA |=  (1 << ADPS2);  // 1
   ADCSRA |=  (1 << ADPS1);  // 1
   ADCSRA |=  (1 << ADPS0);  // 1
