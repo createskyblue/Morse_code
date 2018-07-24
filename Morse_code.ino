@@ -6,6 +6,7 @@
   =========================================================*/
 #include <Arduboy2.h>
 Arduboy2 arduboy;
+BeepPin1 beep;
 #include <EEPROM.h>
 /*EEPROM:
       0    1    2    3    4    5    6    7    8
@@ -26,6 +27,7 @@ const uint8_t Kup[] PROGMEM = {0x18, 0x3C, 0x7E, 0xDB, 0x99, 0x18, 0x18, 0x18};
 
 #define RxPin A0 //RX
 #define TxPin 13 //TX
+bool SOF;  //声音
 byte ADCMod = 0; //4-0 8-1 16-2 32-3 128-4 设置采样深度
 byte ROOM = 0; //场景号 主菜单-0 RX界面-1 自定义TX-2 随机TX-3 设置-4 ADC设置-5
 byte CB = 0; //按键选择返回值
@@ -37,10 +39,10 @@ byte JF;//跳帧
 bool EL = false; //ROOM-1:电平情况 ROOM-2:是否编辑文本
 bool NEL = false; //现在电平情况  ROOM-2 为TX状态
 long CIT1, CIT2; //开始和上一次时间
-int CILTF = 10; //这个值由ML与LS决定
+int CILTF = 10; //这个值由ML与LS决定  ROOM-2为发送进度
 int DTO = 90; //接收超时    在TX模式中为最低间隔延迟
 byte DTT[5]; //缓存的数据表 0代表在点的间隔低电平 1代表点 2代表划
-byte DTL = 255; //缓存写入的位置 255代为禁用 也就是说没信号
+byte DTL = 255; //缓存写入的位置 255代为禁用 也就是说没信号   在ROOM-2代表是否连续发信
 //码库
 const int MH[36] PROGMEM = {
   12222,
@@ -97,9 +99,11 @@ void(* resetFunc) (void) = 0; //制造重启命令
 void setup()
 {
   arduboy.boot();
+  arduboy.setFrameRate(30);
+  beep.begin();
+  Serial.begin(115200);   //初始化串口比特率
   pinMode(RxPin, INPUT); //初始化RXpin口
 
-  Serial.begin(115200);   //初始化串口比特率
   byte ERC = 0; //EEProm Check
   //检查EEPROM
   for (int i = 0; i < 4; i++) {
@@ -119,26 +123,32 @@ void setup()
     EEPROM.write(1, 52);
     EEPROM.write(2, 41);
     EEPROM.write(3, 43);
-    EEPROM.write(4, 0); //ADCMod
+    EEPROM.write(4, 0); //ADCMod   ADC采样深度
+    EEPROM.write(5, 1); //SOF      声音
     ERC = 0;
     for (int i = 0; i < 7; i++) {
       ERC = EEPROM.read(i) + ERC;
     }
-    if (ERC != 0) resetFunc(); else arduboy.println(F("EEPROM writing error"));
+    if (ERC != 0) resetFunc();
+    else arduboy.println(F("EEPROM writing error"));
     arduboy.display();
     delay(1500);
   }
   ADCMod = EEPROM.read(4); //读取ADCMod设置
+  SOF = EEPROM.read(5); //读取声音设置
   ADCSET();
 }
-
 /*=========================================================
                      不停循环
   =========================================================*/
 void loop()
 {
+  if (SOF == true) arduboy.audio.on();
+  else arduboy.audio.off();
+
   key(); //按键检测
-  if (ROOM == 0) JF = 0; else if (ROOM == 1) {
+  if (ROOM == 0) JF = 0;
+  else if (ROOM == 1) {
     JF = 2;
     sampling(); //采样
     Minterval(); //计算间隔
@@ -150,36 +160,54 @@ void loop()
     DT++;
   }
 }
-
 /*=========================================================
                      按键检测
   =========================================================*/
-void key() {
+void key()
+{
   if ((arduboy.pressed(A_BUTTON))) {
     if (ROOM == 0) {
       ROOM = CB + 1;
       CB = 0;
     } else if (ROOM == 4) {
-      ROOM = CB + 5;
       if (CB == 0) {
         //ADC设置
         CB = ADCMod;
+        ROOM = 6;
+      }
+      if (CB == 1) {
+        //SOF设置
+        SOF = !SOF;
+        EEPROM.write(5, SOF);
       }
     } else if (ROOM == 2) {
-      if (CB == 0) EL = true; else if (CB == 2 && EL == false) NEL = !NEL; else if (EL == true) {
+      if (CB == 0 && EL == false) EL = true;
+      else if (CB == 2 && EL == false) {
+        NEL = !NEL;
+        CILTF = 0;
+        DTL = 0;
+      } else if (CB == 3 && EL == false) {
+        NEL = !NEL;
+        CILTF = 0;
+        DTL = 255;
+      }
+      else if (EL == true) {
         EL = false;//退出编辑模式
         CB = 0;
       }
+    } else if (ROOM == 1) {
+      ML = 0;
+      MS = 0;
     }
-    delay(200);
+    delay(100);
   }
   if ((arduboy.pressed(B_BUTTON))) {
-    if (ROOM == 1 || ROOM == 4 || ROOM == 2) resetFunc();
-    if (ROOM == 5) {
+    if (ROOM == 1 || ROOM == 4 || ROOM == 2 || ROOM == 5) resetFunc();
+    if (ROOM == 6) {
       ADCMod = CB;
       EEPROM.write(4, ADCMod);
       CB = 0;
-      ROOM--;
+      ROOM = 4;
     }
     delay(200);
   }
@@ -193,31 +221,35 @@ void key() {
     if (ROOM == 2 && CB < 20 && EL == true) {
       CB++;
       delay(200);
-    } else if (ROOM == 2 && CB == 1 && DTO < 9999 ) DTO++;
+    } else if (ROOM == 2 && CB == 1 && DTO < 2999 ) DTO++;
   }
   if ((arduboy.pressed(UP_BUTTON)) ) {
-    if (ROOM == 0 && CB > 0 || ROOM == 2 && CB > 0 && EL == false || ROOM == 4 && CB > 0 || ROOM == 5 && CB > 0) {
+    if (ROOM == 0 && CB > 0 || ROOM == 2 && CB > 0 && EL == false || ROOM == 4 && CB > 0 || ROOM == 6 && CB > 0) {
       CB--;
-      delay(200);
+      delay(50);
     }
     if (ROOM == 1 && (TFL < 31)) TFL++;
     if (ROOM == 2 && EL == true) {
       if (TmpString[CB] < 48 || TmpString[CB] > 57 && TmpString[CB] < 65 && TmpString[CB] > 90) TmpString[CB] = 48;
       TmpString[CB]++;
-      if (TmpString[CB] == 58) TmpString[CB] = 65; else if (TmpString[CB] == 91) TmpString[CB] = 32; else if (TmpString[CB] == 32) TmpString[CB] = 32;
+      if (TmpString[CB] == 58) TmpString[CB] = 65;
+      else if (TmpString[CB] == 91) TmpString[CB] = 32;
+      else if (TmpString[CB] == 32) TmpString[CB] = 32;
       delay(100);
     }
   }
   if ((arduboy.pressed(DOWN_BUTTON))) {
-    if (ROOM == 0 && CB < 3 || ROOM == 4 && CB < 0 || ROOM == 5 && CB < 4 || ROOM == 2 && CB < 2 && EL == false)  {
+    if (ROOM == 0 && CB < 4 || ROOM == 4 && CB < 1 || ROOM == 6 && CB < 4 || ROOM == 2 && CB < 3 && EL == false)  {
       CB++;
-      delay(200);
+      delay(50);
     }
-    if (ROOM == 1 && (TFL > 0)) TFL++;
+    if (ROOM == 1 && (TFL > 0)) TFL--;
     if (ROOM == 2 && EL == true) {
       if (TmpString[CB] < 48 || TmpString[CB] > 57 && TmpString[CB] < 65 && TmpString[CB] > 90) TmpString[CB] = 32;
       TmpString[CB]--;
-      if (TmpString[CB] == 31) TmpString[CB] = 90; else if (TmpString[CB] == 47) TmpString[CB] = 32; else if (TmpString[CB] == 64) TmpString[CB] = 57;
+      if (TmpString[CB] == 31) TmpString[CB] = 90;
+      else if (TmpString[CB] == 47) TmpString[CB] = 32;
+      else if (TmpString[CB] == 64) TmpString[CB] = 57;
       delay(100);
     }
   }
@@ -225,7 +257,8 @@ void key() {
 /*=========================================================
                      显示
   =========================================================*/
-void Draw() {
+void Draw()
+{
   arduboy.clear();
   if (ROOM == 0) {
     arduboy.print(F("> MENU"));
@@ -237,11 +270,69 @@ void Draw() {
     arduboy.println(F("3.TX Speed training"));
     arduboy.setCursor(8, 40);
     arduboy.println(F("4.SET"));
+    arduboy.setCursor(8, 48);
+    arduboy.println(F("5.ABOUT"));
     //显示选择
     arduboy.setCursor(0, 8 * (CB + 2));
     arduboy.println(F("*"));
   }
+  if (ROOM == 1) {
+    DrawWav();  //显示波形
+    arduboy.setCursor(0, 0);
+    for (int i = 0; i < 21; i++) {
+      arduboy.print(char(TmpString[i]));
+    }
+    arduboy.setCursor(0, 8);
+    arduboy.print(F("ML:"));
+    arduboy.print(ML);
+    arduboy.setCursor(64, 8);
+    arduboy.print(F("MS:"));
+    arduboy.print(MS);
+    arduboy.setCursor(0, 20);
+    arduboy.print(F("RX:"));
+    if (DTL != 255) arduboy.print(DTL);
+    else arduboy.print(F("N/A"));
+    arduboy.setCursor(64, 20);
+    arduboy.print(F("DTT:"));
+    for (int i = 0; i < 5; i++) {
+      arduboy.print(DTT[i]);
+    }
+    for (int i = 0; i < 10; i++) {    //增加气氛...我知道这注释很扯...管他的
+      if (TmpString[i + 11] == EGG[i]) {
+        EGGN++;
+      } else EGGN = 0;
+    }
+    if (EGGN == 10) VEGG();
+  }
   if (ROOM == 2) {
+    if (NEL == true) {
+      pinMode(TxPin, OUTPUT); //初始化TXpin口
+      for (byte i = 0; i < 36; i++) {    //匹配数据库信号
+        if (byte(pgm_read_word_near(&ME[i])) == byte(TmpString[CILTF])) {
+          String TXT = String(pgm_read_word_near(&MH[i]));
+          for (byte I = 0; I < 5; I++) {
+            if (char(TXT[I]) == 49) {
+              digitalWrite(TxPin, HIGH);
+              beep.tone(440);
+              delay(DTO);
+            } else  if (char(TXT[I]) == 50) {
+              digitalWrite(TxPin, HIGH);
+              beep.tone(440);
+              delay(DTO * 3);
+            }
+            digitalWrite(TxPin, LOW);  //间隔信号
+            beep.noTone();
+            delay(DTO);
+          }
+        }
+      }
+      delay(DTO * 3);
+      CILTF++;
+      if (CILTF >= 21) {
+        if (DTL != 255) NEL = !NEL;
+        CILTF = 0;
+      };
+    }
     arduboy.println(F(">TX"));
     arduboy.drawRect(0, 12, 128, 16, 1);
     arduboy.setCursor(48, 8);
@@ -259,80 +350,48 @@ void Draw() {
     arduboy.drawLine(96, 44, 126, 44, 1); //横线
     arduboy.drawLine(96, 40, 96, 48, 1); //左侧竖线
     arduboy.drawLine(127, 40, 127, 48, 1); //右侧竖线
-    arduboy.fillRect(96, 42, map(DTO, 10, 10000, 0, 32), 5, 1);
+    arduboy.fillRect(96, 42, map(DTO, 10, 3000, 0, 32), 5, 1);
     arduboy.setCursor(8, 48);
     arduboy.print(F("TX "));
     arduboy.print(NEL);
+    arduboy.setCursor(8, 56);
+    arduboy.print(F("continuous TX"));
     //发信
-    if (NEL == true) {
-      pinMode(TxPin, OUTPUT); //初始化TXpin口
-      for (byte N = 0; N < 21; N++) {
-        for (byte i = 0; i < 36; i++) {    //匹配数据库信号
-          if (byte(pgm_read_word_near(&ME[i])) == byte(TmpString[N])) {
-            String TXT = String(pgm_read_word_near(&MH[i]));
-            for (byte I = 0; I < 5; I++) {
-              if (char(TXT[I]) == 49) {
-                digitalWrite(TxPin, HIGH);
-                delay(DTO);
-              } else {
-                digitalWrite(TxPin, HIGH);
-                delay(DTO * 3);
-              }
-              digitalWrite(TxPin, LOW);  //间隔信号
-              delay(DTO);
-            }
-          }
-        }
-        delay(DTO * 3);
-      }
-    }
-
-
     //显示选择
     if (EL == false) {
       arduboy.setCursor(0, 8 * (CB + 4));
       arduboy.println(F("*"));
+      if (NEL == true) {
+        arduboy.setCursor(6 * CILTF + 1, 24);  //在编辑栏左右移动
+        arduboy.println(F("*"));
+      }
     } else {
       arduboy.setCursor(6 * CB + 1, 24);  //在编辑栏左右移动
       arduboy.println(F("*"));
     }
   }
-  if (ROOM == 1) {
-    DrawWav();  //显示波形
-    arduboy.setCursor(0, 0);
-    for (int i = 0; i < 21; i++) {
-      arduboy.print(char(TmpString[i]));
-    }
-    arduboy.setCursor(0, 8);
-    arduboy.print(F("ML:"));
-    arduboy.print(ML);
-    arduboy.setCursor(64, 8);
-    arduboy.print(F("MS:"));
-    arduboy.print(MS);
-    arduboy.setCursor(0, 20);
-    arduboy.print(F("RX:"));
-    if (DTL != 255) arduboy.print(DTL); else arduboy.print(F("N/A"));
-    arduboy.setCursor(64, 20);
-    arduboy.print(F("DTT:"));
-    for (int i = 0; i < 5; i++) {
-      arduboy.print(DTT[i]);
-    }
-    for (int i = 0; i < 10; i++) {    //增加气氛...我知道这注释很扯...管他的
-      if (TmpString[i + 11] == EGG[i]) {
-        EGGN++;
-      } else EGGN = 0;
-    }
-    if (EGGN == 10) VEGG();
-  }
   if (ROOM == 4) {
     arduboy.print(F("> SET"));
     arduboy.setCursor(8, 16);
     arduboy.println(F("1.ADC"));
+    arduboy.setCursor(8, 24);
+    arduboy.print(F("1.Sound   "));
+    arduboy.print(SOF);
     //显示选择
     arduboy.setCursor(0, 8 * (CB + 2));
     arduboy.println(F("*"));
   }
   if (ROOM == 5) {
+    arduboy.println(F("> ABOUT"));
+    arduboy.println();
+    arduboy.println(F("LHW programming"));
+    arduboy.println(F("The program adopts CC"));
+    arduboy.println(F(" open source protocol"));
+    arduboy.println(F("E-M:1281702594@qq.com"));
+    arduboy.println(F("Version beta2.1"));
+    arduboy.println(F("Press the B key"));
+  }
+  if (ROOM == 6) {
     arduboy.print(F("> ADC"));
     arduboy.setCursor(8, 16);
     arduboy.println(F("4   BIT"));
@@ -348,7 +407,7 @@ void Draw() {
     arduboy.setCursor(0, 8 * (CB + 2));
     arduboy.println(F("*"));
   }
-  if (ROOM == 4 || ROOM == 5) {
+  if (ROOM == 4 || ROOM == 6) {
     arduboy.setCursor(0, 56);
     arduboy.println(F("Press \"B\" to Back"));
   }
@@ -357,7 +416,8 @@ void Draw() {
 /*=========================================================
                      VEGG
   =========================================================*/
-void VEGG() {
+void VEGG()
+{
   arduboy.clear();
   arduboy.drawSlowXYBitmap(0, 0, EggBmp, 128, 64, 1);
   arduboy.display();
@@ -366,7 +426,8 @@ void VEGG() {
 /*=========================================================
                      清除数据缓冲
   =========================================================*/
-void CM() {
+void CM()
+{
   for (int i = 0; i < 5; i++) DTT[i] = 0;
 }
 /*=========================================================
@@ -396,8 +457,9 @@ void translation()
 /*=========================================================
                      超时合并字符串
   =========================================================*/
-void TOStr() {
-  if (( millis() / 10.0) >= CIT1 + DTO) { //译码时间超时 确认不在有数据 数据合并
+void TOStr()
+{
+  if (( millis() / 10.0) >= CIT1 + DTO || DTL > 4 ) { //译码时间超时 确认不在有数据 数据合并
     //数据接收完成 查询数据库
     String TXT;
     for (int i = 0; i < 5; i++) {   //把接收区缓存合成字符串
@@ -420,8 +482,15 @@ void TOStr() {
 /*=========================================================
                      计算间隔
   =========================================================*/
-void Minterval() {
-  if (map(Buffer[127], 63, 31, 0, 31) >= TFL) NEL = true; else NEL = false; //根据过滤获取电平情况
+void Minterval()
+{
+  if (map(Buffer[127], 63, 31, 0, 31) >= TFL) {
+    beep.tone(440);
+    NEL = true;
+  } else {
+    beep.noTone();
+    NEL = false; //根据过滤获取电平情况
+  }
   if (NEL != EL) {
     //电平发生了变化
     CIT2 = ( millis() / 10.0) - CIT1;
@@ -464,18 +533,21 @@ void Minterval() {
 /*=========================================================
                      采样和移位
   =========================================================*/
-void sampling() {
+void sampling()
+{
   //执行数据移位
   for (byte i = 0; i < 127; i++) {
     Buffer[i] = Buffer[i + 1];
   }
   //执行采样
+
   Buffer[127] = map(analogRead(RxPin), 0, 1023, 63, 31);
 }
 /*=========================================================
                      画出波形
   =========================================================*/
-void DrawWav() {
+void DrawWav()
+{
   //显示波形输入
   for (byte i = 0; i < 127; i++) {
     arduboy.drawLine(i, 64, i, Buffer[i], 1);
@@ -486,33 +558,43 @@ void DrawWav() {
 /*=========================================================
                      ADC深度设置
   =========================================================*/
-void ADCSET() {
-  if (ADCMod == 0) setP4(); else if (ADCMod == 1) setP8(); else if (ADCMod == 2) setP16(); else if (ADCMod == 3) setP32();  else if (ADCMod == 4) setP128();
+void ADCSET()
+{
+  if (ADCMod == 0) setP4();
+  else if (ADCMod == 1) setP8();
+  else if (ADCMod == 2) setP16();
+  else if (ADCMod == 3) setP32();
+  else if (ADCMod == 4) setP128();
 }
 /*=========================================================
                      ADC深度设置
   =========================================================*/
-void setP32( ) {
+void setP32( )
+{
   ADCSRA |=  (1 << ADPS2);  // 1
   ADCSRA &=  ~(1 << ADPS1);  // 0
   ADCSRA |=  (1 << ADPS0);  // 1
 }
-void setP16( ) {
+void setP16( )
+{
   ADCSRA |=  (1 << ADPS2);  // 1
   ADCSRA &=  ~(1 << ADPS1);  // 0
   ADCSRA &=  ~(1 << ADPS0);  // 0
 }
-void setP8( ) {  // prescaler = 8
+void setP8( )    // prescaler = 8
+{
   ADCSRA &=  ~(1 << ADPS2);  // 0
   ADCSRA |=  (1 << ADPS1);  // 1
   ADCSRA |=  (1 << ADPS0);  // 1
 }
-void setP4( ) {  // prescaler = 4
+void setP4( )    // prescaler = 4
+{
   ADCSRA &=  ~(1 << ADPS2);  // 0
   ADCSRA |=  (1 << ADPS1);  // 1
   ADCSRA &=  ~(1 << ADPS0);  // 0
 }
-void setP128( ) { // 默認就是這樣
+void setP128( )   // 默認就是這樣
+{
   ADCSRA |=  (1 << ADPS2);  // 1
   ADCSRA |=  (1 << ADPS1);  // 1
   ADCSRA |=  (1 << ADPS0);  // 1
