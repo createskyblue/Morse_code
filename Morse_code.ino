@@ -267,7 +267,7 @@ void Draw()
     arduboy.setCursor(8, 24);
     arduboy.println(F("2.TX Custom content"));
     arduboy.setCursor(8, 32);
-    arduboy.println(F("3.TX Speed training"));
+    arduboy.println(F("3.TEST TOOLS"));
     arduboy.setCursor(8, 40);
     arduboy.println(F("4.SET"));
     arduboy.setCursor(8, 48);
@@ -369,6 +369,9 @@ void Draw()
       arduboy.setCursor(6 * CB + 1, 24);  //在编辑栏左右移动
       arduboy.println(F("*"));
     }
+  }
+  if (ROOM == 3) {
+    DIAGNOSTIC();
   }
   if (ROOM == 4) {
     arduboy.print(F("> SET"));
@@ -599,4 +602,124 @@ void setP128( )   // 默認就是這樣
   ADCSRA |=  (1 << ADPS1);  // 1
   ADCSRA |=  (1 << ADPS0);  // 1
 } // setP128
+/*=========================================================
+                     测试工具
+  =========================================================*/
+void DIAGNOSTIC() {
+  long T0 = millis() / 1000.0 + 5;
+  while (T0 > long(millis() / 1000.0)) {
+    if ((arduboy.pressed(B_BUTTON))) resetFunc();
+    arduboy.clear();
+    arduboy.setCursor(0, 0);
+    arduboy.println(F("DIAGNOSTIC"));
+    arduboy.print(F("Continue for "));
+    arduboy.print(T0 - (millis() / 1000.0));
+    arduboy.print(F(" S"));
+    arduboy.setCursor(0, 56);
+    arduboy.println(F("Press B Key Cancel"));
+    arduboy.display();
+  }
+
+  //测试按键
+  byte TB[6];
+  for (T0 = 0; T0 < 6; T0++) {
+    TB[T0] = 255;
+  }
+  while (int(TB[0] + TB[1] + TB[2] + TB[3] + TB[4] + TB[5]) != 0) {
+    if ((arduboy.pressed(UP_BUTTON)) && TB[0] != 0) TB[0]--;
+    if ((arduboy.pressed(DOWN_BUTTON)) && TB[1] != 0) TB[1]--;
+    if ((arduboy.pressed(LEFT_BUTTON)) && TB[2] != 0) TB[2]--;
+    if ((arduboy.pressed(RIGHT_BUTTON)) && TB[3] != 0) TB[3]--;
+    if ((arduboy.pressed(A_BUTTON)) && TB[4] != 0) TB[4]--;
+    if ((arduboy.pressed(B_BUTTON)) && TB[5] != 0) TB[5]--;
+    arduboy.clear();
+    arduboy.println(F("Button test"));
+    arduboy.println();
+    arduboy.print(F("UP    "));
+    arduboy.println(TB[0]);
+    arduboy.print(F("DOWN  "));
+    arduboy.println(TB[1]);
+    arduboy.print(F("LEFT  "));
+    arduboy.println(TB[2]);
+    arduboy.print(F("RIGHT "));
+    arduboy.println(TB[3]);
+    arduboy.print(F("A     "));
+    arduboy.println(TB[4]);
+    arduboy.print(F("B     "));
+    arduboy.println(TB[5]);
+    arduboy.display();
+  }
+  delay(1000);
+
+
+  //测试屏幕
+  for (T0 = 0; T0 < 6; T0) {
+    if ((arduboy.pressed(A_BUTTON))) {
+      T0++;
+      delay(200);
+    }
+    arduboy.clear();
+    if (T0 == 0) arduboy.fillRect(0, 0, 128, 64, 1); else if (T0 == 2) arduboy.drawRect(0, 0, 128, 64, 1); else if (T0 == 3 || T0 == 4) {
+      for (int y = 0; y < 64; y++ ) {
+        for (int x = 0; x < 129; x++ ) { //129不解释
+          if ( (x + y) & 1 ) {
+            arduboy.drawPixel(x + T0 - 4, y, 1);
+          }
+        }
+      }
+    } else if (T0 == 5) {
+      for (int y = 0; y < 8; y++ ) {
+        for (int x = 0; x < 21; x++ ) { //129不解释
+          arduboy.print(F("@"));
+        }
+        arduboy.println();
+      }
+    }
+    arduboy.display();
+  }
+
+  //EEPROM测试
+  for (T0 = 0; T0 < EEPROM.length(); T0++) {
+    arduboy.clear();
+    byte Ran = random(255);
+    int EP, EF;
+    arduboy.println(F("EEPROM TEST"));
+    arduboy.println();
+    arduboy.print(F("Add     "));
+    arduboy.print(T0);
+    arduboy.print(F(" / "));
+    arduboy.println(EEPROM.length() - 1);
+    arduboy.print(F("Write   "));
+    arduboy.println(Ran);
+    EEPROM.write(T0, Ran);
+    arduboy.print(F("Read    "));
+    arduboy.println(EEPROM.read(T0));
+    if (EEPROM.read(T0) == Ran) {
+      arduboy.println(F("        PASS"));
+      EP++;
+    } else {
+      arduboy.println(F("Fail"));
+      EF++;
+      delay(1000);
+    }
+    EEPROM.write(T0, 0);
+    arduboy.println();
+    arduboy.print(F("PASS "));
+    arduboy.print(EP);
+    arduboy.print(F("   Fail "));
+    arduboy.println(EF);
+    arduboy.display();
+  }
+  delay(1000);
+
+
+  //测试完成
+  arduboy.clear();
+  arduboy.println(F("TEST OK!"));
+  arduboy.println();
+  arduboy.println(F("Reset All"));
+  arduboy.display();
+  delay(1000);
+  resetFunc();
+}
 
